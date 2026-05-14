@@ -1,0 +1,62 @@
+# ---- Android / Gradle ----
+.gradle/
+**/build/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+
+# APK / bundles (artifacts)
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Local SDK path — machine-specific (never commit)
+local.properties
+
+# ---- IDE ----
+.idea/
+*.ipr
+*.iws
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Secrets & Firebase client config ----
+# google-services.json contains your Firebase app's identifiers; treat it
+# as sensitive for a public portfolio. Commit a README note instead —
+# clones add their own from Firebase Console.
+**/google-services.json
+google-services.json
+
+# Deprecated / never ship service account JSON in an app repo
+**/service-account.json
+**/*service-account*.json
+service-account*.json
+
+# Firebase CLI local state & logs
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# Env files (functions or scripts)
+.env
+.env.*
+!.env.example
+
+# ---- Keystores (release signing is highly sensitive) ----
+*.jks
+*.keystore
+*.pfx
+
+# ---- Cloud Functions (Node) ----
+functions/node_modules/
+functions/lib/
+
+# ---- Misc ----
+*.log
+*.hprof

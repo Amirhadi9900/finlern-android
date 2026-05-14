@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ---------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isSelf(email) {
+      return isSignedIn() && request.auth.token.email == email;
+    }
+    // The list of admin/teacher emails. Keep in sync with
+    // AuthorizedEmails.kt on the client.
+    function isAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email in [
+          "h.borji79@gmail.com"
+        ];
+    }
+    function chatHasMe(chatId) {
+      return isSignedIn() &&
+        request.auth.token.email in
+        get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+    }
+
+    // ---------- userProfiles ----------------------------------------------
+    match /userProfiles/{userEmail} {
+      allow read: if isSignedIn();
+
+      // First-time profile creation: the doc id must equal the user's email
+      // so we can't impersonate someone else.
+      allow create: if isSelf(userEmail) &&
+        request.resource.data.email == userEmail;
+
+      // Owner updates: free-form. Other users may only delete the fcmToken
+      // field (stale-token cleanup performed by Cloud Functions; rule still
+      // present in case a client cleans up after a failed push).
+      allow update: if isSelf(userEmail);
+      allow update: if isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken']) &&
+        !('fcmToken' in request.resource.data);
+
+      allow delete: if isAdmin();
+    }
+
+    // ---------- chats -----------------------------------------------------
+    match /chats/{chatId} {
+      allow read: if isSignedIn() &&
+        request.auth.token.email in resource.data.participants;
+
+      // Anyone signed in can create a chat as long as they're one of the
+      // participants. The client sorts the participants array so we can
+      // find existing chats by exact match.
+      allow create: if isSignedIn() &&
+        request.auth.token.email in request.resource.data.participants;
+
+      // Participants can update everything *except* the participants list
+      // and createdAt (those are immutable). Locking these down prevents
+      // a participant from quietly removing the other user or rewriting
+      // the chat's history.
+      allow update: if isSignedIn() &&
+        request.auth.token.email in resource.data.participants &&
+        request.resource.data.participants == resource.data.participants &&
+        request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read, create: if chatHasMe(chatId);
+        // Editing/deleting your own messages.
+        allow update, delete: if chatHasMe(chatId) &&
+          resource.data.senderId == request.auth.token.email;
+      }
+    }
+
+    // ---------- calls -----------------------------------------------------
+    //
+    // Each call doc is created by the caller and only mutated by the two
+    // participants. ICE candidate sub-collections are read by the *other*
+    // participant.
+    match /calls/{callId} {
+      // True when the *existing* document's caller/receiver matches the
+      // signed-in user. Use this for read/update/delete so an attacker
+      // can't satisfy the rule by writing their own email into the update
+      // payload.
+      function callHasMe() {
+        return isSignedIn() && (
+          request.auth.token.email == resource.data.callerId ||
+          request.auth.token.email == resource.data.receiverId
+        );
+      }
+      // Same helper for ICE candidate sub-collections, where there is no
+      // `resource.data.callerId` on the candidate itself — we have to
+      // look up the parent call doc explicitly.
+      function callParticipant() {
+        let parent = get(/databases/$(database)/documents/calls/$(callId)).data;
+        return isSignedIn() && (
+          request.auth.token.email == parent.callerId ||
+          request.auth.token.email == parent.receiverId
+        );
+      }
+
+      allow read: if callHasMe();
+
+      // Only the caller can create a call doc, and only with themself as
+      // the callerId. Fields like callId / receiverId / type / status are
+      // expected but not strictly enforced here; the client owns them.
+      allow create: if isSignedIn() &&
+        request.resource.data.callerId == request.auth.token.email &&
+        request.resource.data.receiverId is string &&
+        request.resource.data.receiverId != request.auth.token.email;
+
+      // Updates may only come from the existing participants. Also lock
+      // down the immutable fields so nobody can hijack a call by
+      // overwriting callerId/receiverId/createdAt.
+      allow update: if callHasMe() &&
+        request.resource.data.callerId == resource.data.callerId &&
+        request.resource.data.receiverId == resource.data.receiverId &&
+        request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if isAdmin();
+
+      match /callerCandidates/{candId} {
+        allow read, write: if callParticipant();
+      }
+      match /receiverCandidates/{candId} {
+        allow read, write: if callParticipant();
+      }
+    }
+  }
+}
